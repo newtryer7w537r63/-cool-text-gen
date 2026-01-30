@@ -2,31 +2,47 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Perspective Twist Lines Only</title>
+<title>Spiral Perspective Lines</title>
 
 <style>
-body { font-family: system-ui, sans-serif; background: #fafafa; padding: 16px; }
-.controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
-svg { width: 100%; max-width: 1100px; height: 420px; border: 1px solid #ccc; background: white; }
-.small { font-size: 13px; color: #666; }
+body {
+  font-family: system-ui, sans-serif;
+  background: #fafafa;
+  padding: 16px;
+}
+
+.controls {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+svg {
+  width: 100%;
+  max-width: 1100px;
+  height: 420px;
+  border: 1px solid #ccc;
+  background: white;
+}
 </style>
 </head>
 <body>
 
-<h3>Perspective Twist Lines (Text Fixed)</h3>
+<h3>Spiral Lines (Text Fixed, Ends Pinned)</h3>
 
 <div class="controls">
-  <input id="textInput" type="text" value="BLOCK">
-  <label>Z Rotate <input id="rotateZ" type="range" min="0" max="1080" value="0"></label>
-  <label>Samples <input id="samples" type="number" min="3" max="80" value="16" style="width:70px"></label>
-  <label>Vanishing X <input id="vX" type="number" value="550" style="width:80px"></label>
-  <label>Vanishing Y <input id="vY" type="number" value="40" style="width:80px"></label>
-  <label>Upload TTF/OTF <input id="fontUpload" type="file" accept=".ttf,.otf"></label>
+  <input id="textInput" value="BLOCK">
+  <label>Twist
+    <input id="twist" type="range" min="0" max="40" value="12">
+  </label>
+  <label>Amplitude
+    <input id="amp" type="range" min="0" max="40" value="14">
+  </label>
+  <label>Vanishing X <input id="vX" type="number" value="550"></label>
+  <label>Vanishing Y <input id="vY" type="number" value="40"></label>
+  <input id="fontUpload" type="file" accept=".ttf,.otf">
   <button id="renderBtn">Render</button>
-</div>
-
-<div class="small">
-Text stays fixed. Only lines twist around perspective.
 </div>
 
 <svg id="svg" viewBox="0 0 1100 420"></svg>
@@ -34,127 +50,114 @@ Text stays fixed. Only lines twist around perspective.
 <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 <script>
 const svg = document.getElementById("svg");
-const textInput = document.getElementById("textInput");
-const rotateZ = document.getElementById("rotateZ");
-const samplesInput = document.getElementById("samples");
+const twistInput = document.getElementById("twist");
+const ampInput = document.getElementById("amp");
 const vXInput = document.getElementById("vX");
 const vYInput = document.getElementById("vY");
+const textInput = document.getElementById("textInput");
 const fontUpload = document.getElementById("fontUpload");
 const renderBtn = document.getElementById("renderBtn");
 
 let font = null;
-let rotationDeg = 0;
-let allPts = [];
-let fixedGroup;
-let cx=0, cy=0; // rotation center for lines
+let points = [];
 
-function rad(d){ return d * Math.PI/180; }
-
-function twistPoint(pt, centerX, centerY, deg) {
-  // rotate point around center, only for lines, not text
-  const r = rad(deg);
-  const x = pt.x - centerX;
-  const y = pt.y - centerY;
-  return {
-    x: centerX + x * Math.cos(r) - y * Math.sin(r),
-    y: centerY + x * Math.sin(r) + y * Math.cos(r)
-  };
-}
-
-// cubic and quad helpers
-function cubic(p0,p1,p2,p3,t){ const u=1-t; return {x:u*u*u*p0.x+3*u*u*t*p1.x+3*u*t*t*p2.x+t*t*t*p3.x, y:u*u*u*p0.y+3*u*u*t*p1.y+3*u*t*t*p2.y+t*t*t*p3.y}; }
-function quad(p0,p1,p2,t){ const u=1-t; return {x:u*u*p0.x+2*u*t*p1.x+t*t*p2.x, y:u*u*p0.y+2*u*t*p1.y+t*t*p2.y}; }
-
-function samplePath(path,samples){
-  let pts=[], cur={x:0,y:0};
-  path.commands.forEach(c=>{
-    if(c.type==="M"){ cur={x:c.x,y:c.y}; pts.push(cur); }
-    else if(c.type==="L"){ cur={x:c.x,y:c.y}; pts.push(cur); }
-    else if(c.type==="C"){ const p0=cur,p1={x:c.x1,y:c.y1},p2={x:c.x2,y:c.y2},p3={x:c.x,y:c.y}; for(let i=0;i<=samples;i++) pts.push(cubic(p0,p1,p2,p3,i/samples)); cur=p3; }
-    else if(c.type==="Q"){ const p0=cur,p1={x:c.x1,y:c.y1},p2={x:c.x,y:c.y}; for(let i=0;i<=samples;i++) pts.push(quad(p0,p1,p2,i/samples)); cur=p2; }
+function samplePath(path, samples = 12) {
+  let pts = [], cur = {x:0,y:0};
+  path.commands.forEach(c => {
+    if (c.type === "M") {
+      cur = {x:c.x,y:c.y};
+      pts.push(cur);
+    }
+    if (c.type === "L") {
+      cur = {x:c.x,y:c.y};
+      pts.push(cur);
+    }
+    if (c.type === "C") {
+      for (let i=0;i<=samples;i++) {
+        const t=i/samples,u=1-t;
+        pts.push({
+          x:u*u*u*cur.x+3*u*u*t*c.x1+3*u*t*t*c.x2+t*t*t*c.x,
+          y:u*u*u*cur.y+3*u*u*t*c.y1+3*u*t*t*c.y2+t*t*t*c.y
+        });
+      }
+      cur={x:c.x,y:c.y};
+    }
   });
   return pts;
 }
 
-function renderStatic() {
-  if(!font) return;
-  while(svg.firstChild) svg.removeChild(svg.firstChild);
+function spiralPath(p, vx, vy, twist, amp) {
+  const dx = vx - p.x;
+  const dy = vy - p.y;
+  const len = Math.hypot(dx,dy);
+  const nx = -dy / len;
+  const ny = dx / len;
+
+  const steps = 16;
+  let d = `M ${p.x} ${p.y}`;
+
+  for (let i=1;i<steps;i++) {
+    const t = i/steps;
+    const wave = Math.sin(t * twist * Math.PI * 2);
+    const falloff = t * (1 - t);
+    const off = wave * amp * falloff;
+
+    const x = p.x + dx*t + nx*off;
+    const y = p.y + dy*t + ny*off;
+    d += ` L ${x} ${y}`;
+  }
+
+  d += ` L ${vx} ${vy}`;
+  return d;
+}
+
+function render() {
+  if (!font) return;
+  svg.innerHTML = "";
 
   const fontSize = 160;
   const startX = 80;
   const baseY = 240;
+  const text = textInput.value || "BLOCK";
 
-  // draw text path
-  const path = font.getPath(textInput.value||"BLOCK",startX,baseY,fontSize);
-  const pathEl = document.createElementNS("http://www.w3.org/2000/svg","path");
-  pathEl.setAttribute("d",path.toPathData());
-  pathEl.setAttribute("fill","#000");
-  svg.appendChild(pathEl);
+  const path = font.getPath(text,startX,baseY,fontSize);
+  const textPath = document.createElementNS("http://www.w3.org/2000/svg","path");
+  textPath.setAttribute("d",path.toPathData());
+  textPath.setAttribute("fill","#000");
+  svg.appendChild(textPath);
 
-  // sample points
+  points = [];
   let penX = startX;
-  allPts = [];
-  const glyphs = font.stringToGlyphs(textInput.value||"BLOCK");
-  glyphs.forEach((g,i,a)=>{
+  font.stringToGlyphs(text).forEach((g,i,a)=>{
     const p = g.getPath(penX,baseY,fontSize);
-    allPts.push(...samplePath(p,+samplesInput.value));
-    const k = i<a.length-1?font.getKerningValue(g,a[i+1]):0;
-    penX += g.advanceWidth*(fontSize/font.unitsPerEm) + k*(fontSize/font.unitsPerEm);
+    points.push(...samplePath(p));
+    const k=i<a.length-1?font.getKerningValue(g,a[i+1]):0;
+    penX+=g.advanceWidth*(fontSize/font.unitsPerEm)+k*(fontSize/font.unitsPerEm);
   });
 
-  // rotation center is roughly center of text
-  const bbox = path.getBoundingBox();
-  cx = (bbox.x1+bbox.x2)/2;
-  cy = (bbox.y1+bbox.y2)/2;
+  const vx = +vXInput.value;
+  const vy = +vYInput.value;
+  const twist = +twistInput.value;
+  const amp = +ampInput.value;
 
-  // create line group
-  fixedGroup = document.createElementNS("http://www.w3.org/2000/svg","g");
-  svg.appendChild(fixedGroup);
-
-  renderTwist();
-}
-
-function renderTwist(){
-  if(!allPts.length) return;
-  while(fixedGroup.firstChild) fixedGroup.removeChild(fixedGroup.firstChild);
-
-  const vX = +vXInput.value;
-  const vY = +vYInput.value;
-
-  allPts.forEach(pt=>{
-    const twisted = twistPoint(pt, cx, cy, rotationDeg);
-    const l = document.createElementNS("http://www.w3.org/2000/svg","line");
-    l.setAttribute("x1", twisted.x);
-    l.setAttribute("y1", twisted.y);
-    l.setAttribute("x2", vX);
-    l.setAttribute("y2", vY);
-    l.setAttribute("stroke","#111");
-    l.setAttribute("stroke-width","0.8");
-    fixedGroup.appendChild(l);
+  points.forEach(pt=>{
+    const sp = document.createElementNS("http://www.w3.org/2000/svg","path");
+    sp.setAttribute("d", spiralPath(pt,vx,vy,twist,amp));
+    sp.setAttribute("stroke","#111");
+    sp.setAttribute("stroke-width","0.8");
+    sp.setAttribute("fill","none");
+    svg.appendChild(sp);
   });
-
-  // vanishing point
-  const vp = document.createElementNS("http://www.w3.org/2000/svg","circle");
-  vp.setAttribute("cx",vX);
-  vp.setAttribute("cy",vY);
-  vp.setAttribute("r","3.5");
-  vp.setAttribute("fill","#111");
-  fixedGroup.appendChild(vp);
 }
 
-// event listeners
 fontUpload.addEventListener("change", async e=>{
-  const f = e.target.files[0];
-  if(!f) return;
-  font = opentype.parse(await f.arrayBuffer());
-  renderStatic();
+  font = opentype.parse(await e.target.files[0].arrayBuffer());
+  render();
 });
 
-renderBtn.addEventListener("click", renderStatic);
-rotateZ.addEventListener("input", ()=>{
-  rotationDeg = +rotateZ.value;
-  renderTwist();
-});
+twistInput.addEventListener("input", render);
+ampInput.addEventListener("input", render);
+renderBtn.addEventListener("click", render);
 </script>
 </body>
 </html>
