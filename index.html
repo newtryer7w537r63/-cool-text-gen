@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Perspective Twist Text (Connected)</title>
+<title>Perspective Twist Text (Animated)</title>
 
 <style>
 body {
@@ -32,7 +32,7 @@ svg {
 </head>
 <body>
 
-<h3>Perspective Twist Text (Fully Connected)</h3>
+<h3>Perspective Twist Text (Animated)</h3>
 
 <div class="controls">
   <input id="textInput" type="text" value="BLOCK">
@@ -56,7 +56,7 @@ svg {
 </div>
 
 <div class="small">
-Rotation is applied in geometry space. Lines stay connected. Re-render does not reset rotation.
+Rotation is applied in geometry space. Lines stay connected. Drag the slider to twist dynamically.
 </div>
 
 <svg id="svg" viewBox="0 0 1100 420"></svg>
@@ -108,11 +108,8 @@ function quad(p0,p1,p2,t){
 function samplePath(path, samples){
   let pts=[], cur={x:0,y:0};
   path.commands.forEach(c=>{
-    if(c.type==="M"){cur={x:c.x,y:c.y};pts.push(cur);}
-    else if(c.type==="L"){
-      const a=cur,b={x:c.x,y:c.y};
-      pts.push(a,b); cur=b;
-    }
+    if(c.type==="M"){cur={x:c.x,y:c.y}; pts.push(cur);}
+    else if(c.type==="L"){ cur={x:c.x,y:c.y}; pts.push(cur);}
     else if(c.type==="C"){
       const p0=cur,p1={x:c.x1,y:c.y1},p2={x:c.x2,y:c.y2},p3={x:c.x,y:c.y};
       for(let i=0;i<=samples;i++) pts.push(cubic(p0,p1,p2,p3,i/samples));
@@ -127,97 +124,102 @@ function samplePath(path, samples){
   return pts;
 }
 
-function render() {
+let allPts = [];
+
+function renderStatic() {
   if (!font) return;
 
-  const text = textInput.value || "BLOCK";
-  const samples = +samplesInput.value;
-  const vX = +vXInput.value;
-  const vY = +vYInput.value;
-
-  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  while(svg.firstChild) svg.removeChild(svg.firstChild);
 
   const fixed = document.createElementNS("http://www.w3.org/2000/svg","g");
-  const glyphsG = document.createElementNS("http://www.w3.org/2000/svg","g");
-  svg.append(fixed, glyphsG);
+  svg.appendChild(fixed);
 
   const fontSize = 160;
   const startX = 80;
   const baseY = 240;
-  const cx = 550, cy = 210;
 
-  // draw glyph path (rotated numerically)
-  const path = font.getPath(text, startX, baseY, fontSize);
-  const d = path.commands.map(c=>{
-    if(c.x!==undefined){
-      const p = rotatePoint({x:c.x,y:c.y},cx,cy,rotationDeg);
-      c = {...c, x:p.x, y:p.y};
-    }
-    if(c.x1!==undefined){
-      const p1 = rotatePoint({x:c.x1,y:c.y1},cx,cy,rotationDeg);
-      c.x1=p1.x; c.y1=p1.y;
-    }
-    if(c.x2!==undefined){
-      const p2 = rotatePoint({x:c.x2,y:c.y2},cx,cy,rotationDeg);
-      c.x2=p2.x; c.y2=p2.y;
-    }
-    return c;
-  });
+  const path = font.getPath(textInput.value || "BLOCK", startX, baseY, fontSize);
+  const bbox = path.getBoundingBox();
+  const cx = (bbox.x1 + bbox.x2)/2;
+  const cy = (bbox.y1 + bbox.y2)/2;
 
-  glyphsG.appendChild(Object.assign(
-    document.createElementNS("http://www.w3.org/2000/svg","path"),
-    { 
-      setAttributeNS: undefined 
-    }
-  ));
-
-  glyphsG.firstChild.setAttribute("d", path.toPathData());
-  glyphsG.firstChild.setAttribute("fill", "#000");
-
-  // sample and rotate points
-  let penX=startX;
-  let allPts=[];
-  font.stringToGlyphs(text).forEach((g,i,a)=>{
-    const p=g.getPath(penX,baseY,fontSize);
-    const pts=samplePath(p,samples).map(pt=>rotatePoint(pt,cx,cy,rotationDeg));
+  // sample all points
+  let penX = startX;
+  allPts = [];
+  font.stringToGlyphs(textInput.value || "BLOCK").forEach((g,i,a)=>{
+    const p = g.getPath(penX, baseY, fontSize);
+    const pts = samplePath(p, +samplesInput.value).map(pt => ({x:pt.x, y:pt.y}));
     allPts.push(...pts);
-    const k=i<a.length-1?font.getKerningValue(g,a[i+1]):0;
-    penX+=g.advanceWidth*(fontSize/font.unitsPerEm)+k*(fontSize/font.unitsPerEm);
+    const k = i<a.length-1?font.getKerningValue(g,a[i+1]):0;
+    penX += g.advanceWidth*(fontSize/font.unitsPerEm) + k*(fontSize/font.unitsPerEm);
   });
 
-  // draw lines
+  // draw glyph path
+  const glyphPathEl = document.createElementNS("http://www.w3.org/2000/svg","path");
+  glyphPathEl.setAttribute("d", path.toPathData());
+  glyphPathEl.setAttribute("fill","#000");
+  svg.appendChild(glyphPathEl);
+
+  return {cx, cy, fixed};
+}
+
+let currentCx, currentCy, fixedGroup;
+
+function render() {
+  if(!allPts.length) return;
+  const vX = +vXInput.value;
+  const vY = +vYInput.value;
+
+  while(fixedGroup.firstChild) fixedGroup.removeChild(fixedGroup.firstChild);
+
   allPts.forEach(pt=>{
-    const l=document.createElementNS("http://www.w3.org/2000/svg","line");
-    l.setAttribute("x1",pt.x);
-    l.setAttribute("y1",pt.y);
-    l.setAttribute("x2",vX);
-    l.setAttribute("y2",vY);
-    l.setAttribute("stroke","#111");
-    l.setAttribute("stroke-width","0.8");
-    fixed.appendChild(l);
+    const rp = rotatePoint(pt, currentCx, currentCy, rotationDeg);
+    const line = document.createElementNS("http://www.w3.org/2000/svg","line");
+    line.setAttribute("x1", rp.x);
+    line.setAttribute("y1", rp.y);
+    line.setAttribute("x2", vX);
+    line.setAttribute("y2", vY);
+    line.setAttribute("stroke","#111");
+    line.setAttribute("stroke-width","0.8");
+    fixedGroup.appendChild(line);
   });
 
-  const vp=document.createElementNS("http://www.w3.org/2000/svg","circle");
+  // vanishing point
+  const vp = document.createElementNS("http://www.w3.org/2000/svg","circle");
   vp.setAttribute("cx",vX);
   vp.setAttribute("cy",vY);
   vp.setAttribute("r","3.5");
   vp.setAttribute("fill","#111");
-  fixed.appendChild(vp);
+  fixedGroup.appendChild(vp);
 }
 
+// font upload
 fontUpload.addEventListener("change", async e=>{
-  const f=e.target.files[0];
+  const f = e.target.files[0];
   if(!f) return;
-  font=opentype.parse(await f.arrayBuffer());
+  font = opentype.parse(await f.arrayBuffer());
+  const {cx, cy, fixed} = renderStatic();
+  currentCx = cx;
+  currentCy = cy;
+  fixedGroup = fixed;
+  render();
 });
 
+// initial render button
+renderBtn.addEventListener("click", ()=>{
+  if(!font) return;
+  const {cx, cy, fixed} = renderStatic();
+  currentCx = cx;
+  currentCy = cy;
+  fixedGroup = fixed;
+  render();
+});
+
+// dynamic rotation
 rotateZ.addEventListener("input", ()=>{
   rotationDeg = +rotateZ.value;
   render();
 });
-
-renderBtn.addEventListener("click", render);
 </script>
 </body>
 </html>
-
