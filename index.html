@@ -1,136 +1,289 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>Perspective Block Text</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Perspective Connect — letters → vanishing point</title>
 
 <style>
-body {
-    background: #eee;
-    font-family: sans-serif;
-    padding: 20px;
-}
-
-.controls {
-    display: flex;
-    gap: 12px;
-    flex-wrap: wrap;
-    margin-bottom: 20px;
-}
-
-svg {
-    border: 1px solid #ccc;
-    background: white;
-    transform-origin: center center;
-}
-
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; padding:18px; background:#fafafa; color:#111; }
+  .controls { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+  input[type=text]{font-size:16px;padding:6px 8px;width:260px;}
+  label{font-size:14px}
+  #svgWrap{border:1px solid #ddd; background:#fff; width:100%; max-width:1100px; height:420px; display:block; margin-top:12px;}
+  #message{color:#666;font-size:13px;margin-top:6px}
+  .small{font-size:13px;color:#666}
+  button{padding:6px 10px}
 </style>
 </head>
 <body>
 
-<h2>Perspective Text Generator</h2>
+<h3>Perspective Connect — connect actual letter outlines to one vanishing point</h3>
 
 <div class="controls">
-    <input id="textInput" type="text" value="BLOCK">
-    <label>Z Rotate
-        <input id="rotateZ" type="range" min="0" max="360" value="0">
-    </label>
-    <label>Upload TTF
-        <input id="fontUpload" type="file" accept=".ttf">
-    </label>
+  <input id="textInput" type="text" value="BLOCK" />
+  <label>Z rotate <input id="rotateZ" type="range" min="0" max="360" value="0"></label>
+  <label>Samples
+    <input id="samples" type="number" min="3" max="80" value="12" style="width:70px;margin-left:6px">
+  </label>
+  <label>Vanishing X <input id="vX" type="number" value="550" style="width:80px;margin-left:6px"></label>
+  <label>Vanishing Y <input id="vY" type="number" value="40" style="width:80px;margin-left:6px"></label>
+
+  <label>Upload TTF
+    <input id="fontUpload" type="file" accept=".ttf,.otf" style="margin-left:6px">
+  </label>
+
+  <button id="renderBtn">Render (use uploaded font)</button>
 </div>
 
-<svg id="svg" width="800" height="300">
-    <defs></defs>
+<div class="small">Notes: upload a TTF/OTF for accurate outlines. The script samples path segments (including curves) and draws lines from those sample points to the single vanishing point.</div>
+<div id="message"></div>
 
-    <!-- perspective lines -->
-    <g id="lines" stroke="#000" stroke-width="1" fill="none"></g>
+<!-- SVG canvas -->
+<div id="svgWrap">
+  <svg id="svg" width="1100" height="420" viewBox="0 0 1100 420" style="transform-origin:center center;"></svg>
+</div>
 
-    <!-- text -->
-    <text id="text"
-          x="200"
-          y="180"
-          font-size="120"
-          font-weight="900"
-          fill="none"
-          stroke="black"
-          stroke-width="2">
-        BLOCK
-    </text>
-</svg>
+<!-- opentype.js from CDN -->
+<script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 
 <script>
-const svg = document.getElementById("svg");
-const textEl = document.getElementById("text");
-const linesGroup = document.getElementById("lines");
-const input = document.getElementById("textInput");
-const rotateZ = document.getElementById("rotateZ");
-const fontUpload = document.getElementById("fontUpload");
+/*
+  Overview:
+  - User uploads a TTF/OTF.
+  - We parse it with opentype.js and create path commands for the text.
+  - We convert opentype path to an SVG path 'd'.
+  - We sample points along line/quad/cubic segments.
+  - For each sampled point, we add a line from the point to the vanishing point.
+  - Draw the filled glyphs on top of the lines (so lines appear behind).
+*/
 
-// fixed vanishing point
-const VANISH_X = 400;
-const VANISH_Y = 20;
+const svg = document.getElementById('svg');
+const textInput = document.getElementById('textInput');
+const rotateZ = document.getElementById('rotateZ');
+const fontUpload = document.getElementById('fontUpload');
+const renderBtn = document.getElementById('renderBtn');
+const message = document.getElementById('message');
+const samplesInput = document.getElementById('samples');
+const vXInput = document.getElementById('vX');
+const vYInput = document.getElementById('vY');
 
-function redrawPerspective() {
-    linesGroup.innerHTML = "";
+let lastFont = null; // opentype.Font
+let lastFontURL = null;
 
-    const box = textEl.getBBox();
-
-    const points = [
-        [box.x, box.y],
-        [box.x + box.width, box.y],
-        [box.x, box.y + box.height],
-        [box.x + box.width, box.y + box.height],
-        [box.x + box.width / 2, box.y],
-        [box.x + box.width / 2, box.y + box.height]
-    ];
-
-    points.forEach(p => {
-        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-        line.setAttribute("x1", p[0]);
-        line.setAttribute("y1", p[1]);
-        line.setAttribute("x2", VANISH_X);
-        line.setAttribute("y2", VANISH_Y);
-        linesGroup.appendChild(line);
-    });
+function setMessage(txt, isError=false) {
+  message.textContent = txt;
+  message.style.color = isError ? 'crimson' : '#666';
 }
 
-// text update
-input.addEventListener("input", () => {
-    textEl.textContent = input.value;
-    redrawPerspective();
+fontUpload.addEventListener('change', async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  setMessage('Loading font — hold your horses...');
+  try {
+    const arrayBuffer = await f.arrayBuffer();
+    lastFont = opentype.parse(arrayBuffer);
+    // create an object URL for CSS usage if needed
+    if (lastFontURL) URL.revokeObjectURL(lastFontURL);
+    lastFontURL = URL.createObjectURL(new Blob([arrayBuffer]));
+    setMessage(`Loaded font: ${f.name}. Now click Render.`);
+  } catch (err) {
+    console.error(err);
+    setMessage('Failed to load font. Try a different TTF/OTF.', true);
+  }
 });
 
-// Z rotation only
-rotateZ.addEventListener("input", () => {
-    svg.style.transform = `rotate(${rotateZ.value}deg)`;
+// helper: cubic bezier point
+function cubicPoint(p0, p1, p2, p3, t) {
+  const u = 1 - t;
+  const tt = t*t, uu = u*u, ttt = tt*t, uuu = uu*u;
+  return {
+    x: uuu * p0.x + 3 * uu * t * p1.x + 3 * u * tt * p2.x + ttt * p3.x,
+    y: uuu * p0.y + 3 * uu * t * p1.y + 3 * u * tt * p2.y + ttt * p3.y
+  };
+}
+
+// helper: quadratic bezier point
+function quadPoint(p0, p1, p2, t) {
+  const u = 1 - t;
+  return {
+    x: u*u*p0.x + 2*u*t*p1.x + t*t*p2.x,
+    y: u*u*p0.y + 2*u*t*p1.y + t*t*p2.y
+  };
+}
+
+// Convert opentype Path to SVG path 'd'
+function pathToD(path) {
+  let d = '';
+  path.commands.forEach(cmd=>{
+    if (cmd.type === 'M') d += `M${cmd.x} ${cmd.y} `;
+    else if (cmd.type === 'L') d += `L${cmd.x} ${cmd.y} `;
+    else if (cmd.type === 'C') d += `C${cmd.x} ${cmd.y} ${cmd.x1} ${cmd.y1} ${cmd.x2} ${cmd.y2} `; // opentype uses different labels: careful
+    else if (cmd.type === 'Q') d += `Q${cmd.x1} ${cmd.y1} ${cmd.x} ${cmd.y} `;
+    else if (cmd.type === 'Z') d += 'Z ';
+    // Note: opentype.js uses commands: {type:'M'|'L'|'C'|'Q'|'Z', x,y, x1,y1, x2,y2}
+  });
+  return d;
+}
+
+// Get sample points from a opentype.Path object
+function samplePointsFromOpPath(path, samplesPerSegment=8) {
+  const points = [];
+  let cur = {x:0,y:0};
+  path.commands.forEach(cmd=>{
+    if (cmd.type === 'M') {
+      cur = {x:cmd.x, y:cmd.y};
+      points.push({...cur});
+    } else if (cmd.type === 'L') {
+      // line: just endpoints (plus optional interpolation)
+      const a = cur, b = {x:cmd.x, y:cmd.y};
+      for (let i=0;i<=1;i++){
+        points.push({ x: a.x + (b.x-a.x)*i, y: a.y + (b.y-a.y)*i });
+      }
+      cur = b;
+    } else if (cmd.type === 'C') {
+      // cubic: opentype command structure uses x1,y1,x2,y2,x,y
+      const p0 = {...cur}, p1 = {x:cmd.x1,y:cmd.y1}, p2 = {x:cmd.x2,y:cmd.y2}, p3 = {x:cmd.x,y:cmd.y};
+      const steps = samplesPerSegment;
+      for (let i=0;i<=steps;i++){
+        const t = i/steps;
+        points.push(cubicPoint(p0,p1,p2,p3,t));
+      }
+      cur = p3;
+    } else if (cmd.type === 'Q') {
+      // quadratic: x1,y1,x,y
+      const p0 = {...cur}, p1 = {x:cmd.x1,y:cmd.y1}, p2 = {x:cmd.x,y:cmd.y};
+      const steps = samplesPerSegment;
+      for (let i=0;i<=steps;i++){
+        const t = i/steps;
+        points.push(quadPoint(p0,p1,p2,t));
+      }
+      cur = p2;
+    } else if (cmd.type === 'Z') {
+      // close, nothing to do
+    }
+  });
+  return points;
+}
+
+// dedupe points roughly
+function uniquePoints(points, eps=0.5){
+  const out = [];
+  for (const p of points){
+    let found = false;
+    for (const q of out){
+      if (Math.abs(p.x - q.x) < eps && Math.abs(p.y - q.y) < eps){ found = true; break; }
+    }
+    if (!found) out.push(p);
+  }
+  return out;
+}
+
+// main render function
+function renderTextToSVG(font, text, fontSize=160, startX=80, baselineY=220, samples=12, vanishX=550, vanishY=40) {
+  // clear
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+  // group for lines (draw first so glyphs sit above)
+  const linesGroup = document.createElementNS('http://www.w3.org/2000/svg','g');
+  svg.appendChild(linesGroup);
+
+  // group for glyph fill
+  const glyphGroup = document.createElementNS('http://www.w3.org/2000/svg','g');
+  svg.appendChild(glyphGroup);
+
+  // create a path for full text using opentype's getPath
+  const path = font.getPath(text, startX, baselineY, fontSize); // returns opentype.Path
+  // Convert to SVG path string
+  const d = path.toPathData ? path.toPathData() : pathToD(path); // fallback to custom converter
+  const glyphPathEl = document.createElementNS('http://www.w3.org/2000/svg','path');
+  glyphPathEl.setAttribute('d', d);
+  glyphPathEl.setAttribute('fill','#000');
+  glyphPathEl.setAttribute('stroke','none');
+  glyphGroup.appendChild(glyphPathEl);
+
+  // Now iterate per-glyph so we can sample points per glyph
+  let x = startX;
+  // We'll get glyphs using font.stringToGlyphs (recommended)
+  const glyphs = font.stringToGlyphs(text);
+  // compute positions with advanceWidth and kerning
+  let penX = startX;
+  const glyphPointCollections = [];
+  for (let i=0;i<glyphs.length;i++){
+    const g = glyphs[i];
+    const glyphPath = g.getPath(penX, baselineY, fontSize);
+    const samplesPts = samplePointsFromOpPath(glyphPath, samples);
+    glyphPointCollections.push(samplesPts);
+    // advance penX (including kerning)
+    const kern = (i < glyphs.length - 1) ? font.getKerningValue(g, glyphs[i+1]) : 0;
+    penX += g.advanceWidth * (fontSize / font.unitsPerEm) + kern * (fontSize / font.unitsPerEm);
+  }
+
+  // Build one combined list of points; dedupe to avoid overlapping lines crowding
+  let allPoints = [];
+  glyphPointCollections.forEach(arr => allPoints = allPoints.concat(arr));
+  allPoints = uniquePoints(allPoints, 0.6);
+
+  // Draw perspective lines from each sample point to the vanishing point
+  allPoints.forEach(p=>{
+    const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+    line.setAttribute('x1', p.x.toFixed(2));
+    line.setAttribute('y1', p.y.toFixed(2));
+    line.setAttribute('x2', vanishX);
+    line.setAttribute('y2', vanishY);
+    line.setAttribute('stroke', '#222');
+    line.setAttribute('stroke-width', '0.9');
+    line.setAttribute('opacity', '0.9');
+    linesGroup.appendChild(line);
+  });
+
+  // draw vanishing point marker and spokes (optional)
+  const vpCircle = document.createElementNS('http://www.w3.org/2000/svg','circle');
+  vpCircle.setAttribute('cx', vanishX);
+  vpCircle.setAttribute('cy', vanishY);
+  vpCircle.setAttribute('r', 3.5);
+  vpCircle.setAttribute('fill','#222');
+  svg.appendChild(vpCircle);
+
+  // add a faint guide from vanishing point outward (nice to show the convergence)
+  const guide = document.createElementNS('http://www.w3.org/2000/svg','path');
+  guide.setAttribute('d', `M${vanishX-220} ${vanishY-40} L${vanishX+220} ${vanishY-40}`);
+  guide.setAttribute('stroke','#bbb');
+  guide.setAttribute('stroke-width','1');
+  guide.setAttribute('opacity','0.4');
+  svg.appendChild(guide);
+}
+
+// respond to Render button
+renderBtn.addEventListener('click', () => {
+  const txt = String(textInput.value || 'BLOCK');
+  const s = parseInt(samplesInput.value) || 12;
+  const vx = Number(vXInput.value) || 550;
+  const vy = Number(vYInput.value) || 40;
+
+  if (!lastFont) {
+    setMessage('No TTF/OTF loaded. Please upload a TTF or OTF file (top-right).', true);
+    return;
+  }
+
+  setMessage('Rendering... (sampling glyph outlines)');
+  try {
+    renderTextToSVG(lastFont, txt, 160, 80, 220, s, vx, vy);
+    setMessage('Rendered. Use the Z-rotate slider to spin on Z axis.');
+  } catch (err) {
+    console.error(err);
+    setMessage('Rendering failed. Check the console for details.', true);
+  }
 });
 
-// font upload
-fontUpload.addEventListener("change", e => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    const fontURL = URL.createObjectURL(file);
-    const fontName = "customFont";
-
-    const style = document.createElement("style");
-    style.innerHTML = `
-        @font-face {
-            font-family: '${fontName}';
-            src: url('${fontURL}');
-        }
-        #text {
-            font-family: '${fontName}';
-        }
-    `;
-    document.head.appendChild(style);
-
-    redrawPerspective();
+// rotate Z slider
+rotateZ.addEventListener('input', ()=>{
+  svg.style.transform = `rotate(${rotateZ.value}deg)`;
 });
 
-redrawPerspective();
+// initial helper message
+setMessage('Upload a TTF/OTF, then click Render. Samples control how many points per path segment are used (more = smoother but heavier).');
+
 </script>
-
 </body>
 </html>
