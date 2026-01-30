@@ -2,61 +2,31 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Perspective Twist Text (Animated)</title>
+<title>Perspective Twist Lines Only</title>
 
 <style>
-body {
-  font-family: system-ui, sans-serif;
-  background: #fafafa;
-  padding: 16px;
-}
-
-.controls {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  align-items: center;
-  margin-bottom: 12px;
-}
-
-svg {
-  width: 100%;
-  max-width: 1100px;
-  height: 420px;
-  border: 1px solid #ccc;
-  background: white;
-}
-
+body { font-family: system-ui, sans-serif; background: #fafafa; padding: 16px; }
+.controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+svg { width: 100%; max-width: 1100px; height: 420px; border: 1px solid #ccc; background: white; }
 .small { font-size: 13px; color: #666; }
 </style>
 </head>
 <body>
 
-<h3>Perspective Twist Text (Animated)</h3>
+<h3>Perspective Twist Lines (Text Fixed)</h3>
 
 <div class="controls">
   <input id="textInput" type="text" value="BLOCK">
-
-  <label>Z Rotate
-    <input id="rotateZ" type="range" min="0" max="1080" value="0">
-  </label>
-
-  <label>Samples
-    <input id="samples" type="number" min="3" max="80" value="16" style="width:70px">
-  </label>
-
+  <label>Z Rotate <input id="rotateZ" type="range" min="0" max="1080" value="0"></label>
+  <label>Samples <input id="samples" type="number" min="3" max="80" value="16" style="width:70px"></label>
   <label>Vanishing X <input id="vX" type="number" value="550" style="width:80px"></label>
   <label>Vanishing Y <input id="vY" type="number" value="40" style="width:80px"></label>
-
-  <label>Upload TTF/OTF
-    <input id="fontUpload" type="file" accept=".ttf,.otf">
-  </label>
-
+  <label>Upload TTF/OTF <input id="fontUpload" type="file" accept=".ttf,.otf"></label>
   <button id="renderBtn">Render</button>
 </div>
 
 <div class="small">
-Rotation is applied in geometry space. Lines stay connected. Drag the slider to twist dynamically.
+Text stays fixed. Only lines twist around perspective.
 </div>
 
 <svg id="svg" viewBox="0 0 1100 420"></svg>
@@ -74,114 +44,93 @@ const renderBtn = document.getElementById("renderBtn");
 
 let font = null;
 let rotationDeg = 0;
+let allPts = [];
+let fixedGroup;
+let cx=0, cy=0; // rotation center for lines
 
-// math helpers
-const rad = d => d * Math.PI / 180;
+function rad(d){ return d * Math.PI/180; }
 
-function rotatePoint(p, cx, cy, a) {
-  const r = rad(a);
-  const cos = Math.cos(r), sin = Math.sin(r);
-  const x = p.x - cx;
-  const y = p.y - cy;
+function twistPoint(pt, centerX, centerY, deg) {
+  // rotate point around center, only for lines, not text
+  const r = rad(deg);
+  const x = pt.x - centerX;
+  const y = pt.y - centerY;
   return {
-    x: cx + x * cos - y * sin,
-    y: cy + x * sin + y * cos
+    x: centerX + x * Math.cos(r) - y * Math.sin(r),
+    y: centerY + x * Math.sin(r) + y * Math.cos(r)
   };
 }
 
-function cubic(p0,p1,p2,p3,t){
-  const u=1-t;
-  return {
-    x:u*u*u*p0.x+3*u*u*t*p1.x+3*u*t*t*p2.x+t*t*t*p3.x,
-    y:u*u*u*p0.y+3*u*u*t*p1.y+3*u*t*t*p2.y+t*t*t*p3.y
-  };
-}
+// cubic and quad helpers
+function cubic(p0,p1,p2,p3,t){ const u=1-t; return {x:u*u*u*p0.x+3*u*u*t*p1.x+3*u*t*t*p2.x+t*t*t*p3.x, y:u*u*u*p0.y+3*u*u*t*p1.y+3*u*t*t*p2.y+t*t*t*p3.y}; }
+function quad(p0,p1,p2,t){ const u=1-t; return {x:u*u*p0.x+2*u*t*p1.x+t*t*p2.x, y:u*u*p0.y+2*u*t*p1.y+t*t*p2.y}; }
 
-function quad(p0,p1,p2,t){
-  const u=1-t;
-  return {
-    x:u*u*p0.x+2*u*t*p1.x+t*t*p2.x,
-    y:u*u*p0.y+2*u*t*p1.y+t*t*p2.y
-  };
-}
-
-function samplePath(path, samples){
+function samplePath(path,samples){
   let pts=[], cur={x:0,y:0};
   path.commands.forEach(c=>{
-    if(c.type==="M"){cur={x:c.x,y:c.y}; pts.push(cur);}
-    else if(c.type==="L"){ cur={x:c.x,y:c.y}; pts.push(cur);}
-    else if(c.type==="C"){
-      const p0=cur,p1={x:c.x1,y:c.y1},p2={x:c.x2,y:c.y2},p3={x:c.x,y:c.y};
-      for(let i=0;i<=samples;i++) pts.push(cubic(p0,p1,p2,p3,i/samples));
-      cur=p3;
-    }
-    else if(c.type==="Q"){
-      const p0=cur,p1={x:c.x1,y:c.y1},p2={x:c.x,y:c.y};
-      for(let i=0;i<=samples;i++) pts.push(quad(p0,p1,p2,i/samples));
-      cur=p2;
-    }
+    if(c.type==="M"){ cur={x:c.x,y:c.y}; pts.push(cur); }
+    else if(c.type==="L"){ cur={x:c.x,y:c.y}; pts.push(cur); }
+    else if(c.type==="C"){ const p0=cur,p1={x:c.x1,y:c.y1},p2={x:c.x2,y:c.y2},p3={x:c.x,y:c.y}; for(let i=0;i<=samples;i++) pts.push(cubic(p0,p1,p2,p3,i/samples)); cur=p3; }
+    else if(c.type==="Q"){ const p0=cur,p1={x:c.x1,y:c.y1},p2={x:c.x,y:c.y}; for(let i=0;i<=samples;i++) pts.push(quad(p0,p1,p2,i/samples)); cur=p2; }
   });
   return pts;
 }
 
-let allPts = [];
-
 function renderStatic() {
-  if (!font) return;
-
+  if(!font) return;
   while(svg.firstChild) svg.removeChild(svg.firstChild);
-
-  const fixed = document.createElementNS("http://www.w3.org/2000/svg","g");
-  svg.appendChild(fixed);
 
   const fontSize = 160;
   const startX = 80;
   const baseY = 240;
 
-  const path = font.getPath(textInput.value || "BLOCK", startX, baseY, fontSize);
-  const bbox = path.getBoundingBox();
-  const cx = (bbox.x1 + bbox.x2)/2;
-  const cy = (bbox.y1 + bbox.y2)/2;
+  // draw text path
+  const path = font.getPath(textInput.value||"BLOCK",startX,baseY,fontSize);
+  const pathEl = document.createElementNS("http://www.w3.org/2000/svg","path");
+  pathEl.setAttribute("d",path.toPathData());
+  pathEl.setAttribute("fill","#000");
+  svg.appendChild(pathEl);
 
-  // sample all points
+  // sample points
   let penX = startX;
   allPts = [];
-  font.stringToGlyphs(textInput.value || "BLOCK").forEach((g,i,a)=>{
-    const p = g.getPath(penX, baseY, fontSize);
-    const pts = samplePath(p, +samplesInput.value).map(pt => ({x:pt.x, y:pt.y}));
-    allPts.push(...pts);
+  const glyphs = font.stringToGlyphs(textInput.value||"BLOCK");
+  glyphs.forEach((g,i,a)=>{
+    const p = g.getPath(penX,baseY,fontSize);
+    allPts.push(...samplePath(p,+samplesInput.value));
     const k = i<a.length-1?font.getKerningValue(g,a[i+1]):0;
     penX += g.advanceWidth*(fontSize/font.unitsPerEm) + k*(fontSize/font.unitsPerEm);
   });
 
-  // draw glyph path
-  const glyphPathEl = document.createElementNS("http://www.w3.org/2000/svg","path");
-  glyphPathEl.setAttribute("d", path.toPathData());
-  glyphPathEl.setAttribute("fill","#000");
-  svg.appendChild(glyphPathEl);
+  // rotation center is roughly center of text
+  const bbox = path.getBoundingBox();
+  cx = (bbox.x1+bbox.x2)/2;
+  cy = (bbox.y1+bbox.y2)/2;
 
-  return {cx, cy, fixed};
+  // create line group
+  fixedGroup = document.createElementNS("http://www.w3.org/2000/svg","g");
+  svg.appendChild(fixedGroup);
+
+  renderTwist();
 }
 
-let currentCx, currentCy, fixedGroup;
-
-function render() {
+function renderTwist(){
   if(!allPts.length) return;
+  while(fixedGroup.firstChild) fixedGroup.removeChild(fixedGroup.firstChild);
+
   const vX = +vXInput.value;
   const vY = +vYInput.value;
 
-  while(fixedGroup.firstChild) fixedGroup.removeChild(fixedGroup.firstChild);
-
   allPts.forEach(pt=>{
-    const rp = rotatePoint(pt, currentCx, currentCy, rotationDeg);
-    const line = document.createElementNS("http://www.w3.org/2000/svg","line");
-    line.setAttribute("x1", rp.x);
-    line.setAttribute("y1", rp.y);
-    line.setAttribute("x2", vX);
-    line.setAttribute("y2", vY);
-    line.setAttribute("stroke","#111");
-    line.setAttribute("stroke-width","0.8");
-    fixedGroup.appendChild(line);
+    const twisted = twistPoint(pt, cx, cy, rotationDeg);
+    const l = document.createElementNS("http://www.w3.org/2000/svg","line");
+    l.setAttribute("x1", twisted.x);
+    l.setAttribute("y1", twisted.y);
+    l.setAttribute("x2", vX);
+    l.setAttribute("y2", vY);
+    l.setAttribute("stroke","#111");
+    l.setAttribute("stroke-width","0.8");
+    fixedGroup.appendChild(l);
   });
 
   // vanishing point
@@ -193,32 +142,18 @@ function render() {
   fixedGroup.appendChild(vp);
 }
 
-// font upload
+// event listeners
 fontUpload.addEventListener("change", async e=>{
   const f = e.target.files[0];
   if(!f) return;
   font = opentype.parse(await f.arrayBuffer());
-  const {cx, cy, fixed} = renderStatic();
-  currentCx = cx;
-  currentCy = cy;
-  fixedGroup = fixed;
-  render();
+  renderStatic();
 });
 
-// initial render button
-renderBtn.addEventListener("click", ()=>{
-  if(!font) return;
-  const {cx, cy, fixed} = renderStatic();
-  currentCx = cx;
-  currentCy = cy;
-  fixedGroup = fixed;
-  render();
-});
-
-// dynamic rotation
+renderBtn.addEventListener("click", renderStatic);
 rotateZ.addEventListener("input", ()=>{
   rotationDeg = +rotateZ.value;
-  render();
+  renderTwist();
 });
 </script>
 </body>
