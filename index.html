@@ -2,28 +2,21 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Perspective Twist Text</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Perspective Twist Text (Connected)</title>
 
 <style>
 body {
-  background: #fafafa;
   font-family: system-ui, sans-serif;
+  background: #fafafa;
   padding: 16px;
 }
 
 .controls {
   display: flex;
-  flex-wrap: wrap;
   gap: 12px;
+  flex-wrap: wrap;
   align-items: center;
   margin-bottom: 12px;
-}
-
-input[type="text"] {
-  font-size: 16px;
-  padding: 6px 8px;
-  width: 260px;
 }
 
 svg {
@@ -34,16 +27,12 @@ svg {
   background: white;
 }
 
-.small {
-  font-size: 13px;
-  color: #666;
-  margin-bottom: 6px;
-}
+.small { font-size: 13px; color: #666; }
 </style>
 </head>
 <body>
 
-<h3>Perspective Twist Text Generator</h3>
+<h3>Perspective Twist Text (Fully Connected)</h3>
 
 <div class="controls">
   <input id="textInput" type="text" value="BLOCK">
@@ -56,13 +45,8 @@ svg {
     <input id="samples" type="number" min="3" max="80" value="16" style="width:70px">
   </label>
 
-  <label>Vanishing X
-    <input id="vX" type="number" value="550" style="width:80px">
-  </label>
-
-  <label>Vanishing Y
-    <input id="vY" type="number" value="40" style="width:80px">
-  </label>
+  <label>Vanishing X <input id="vX" type="number" value="550" style="width:80px"></label>
+  <label>Vanishing Y <input id="vY" type="number" value="40" style="width:80px"></label>
 
   <label>Upload TTF/OTF
     <input id="fontUpload" type="file" accept=".ttf,.otf">
@@ -72,13 +56,12 @@ svg {
 </div>
 
 <div class="small">
-Upload a font, click Render. Only the text rotates. The vanishing point stays locked.
+Rotation is applied in geometry space. Lines stay connected. Re-render does not reset rotation.
 </div>
 
 <svg id="svg" viewBox="0 0 1100 420"></svg>
 
 <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
-
 <script>
 const svg = document.getElementById("svg");
 const textInput = document.getElementById("textInput");
@@ -89,9 +72,23 @@ const vYInput = document.getElementById("vY");
 const fontUpload = document.getElementById("fontUpload");
 const renderBtn = document.getElementById("renderBtn");
 
-let loadedFont = null;
+let font = null;
+let rotationDeg = 0;
 
 // math helpers
+const rad = d => d * Math.PI / 180;
+
+function rotatePoint(p, cx, cy, a) {
+  const r = rad(a);
+  const cos = Math.cos(r), sin = Math.sin(r);
+  const x = p.x - cx;
+  const y = p.y - cy;
+  return {
+    x: cx + x * cos - y * sin,
+    y: cy + x * sin + y * cos
+  };
+}
+
 function cubic(p0,p1,p2,p3,t){
   const u=1-t;
   return {
@@ -109,24 +106,20 @@ function quad(p0,p1,p2,t){
 }
 
 function samplePath(path, samples){
-  let pts=[];
-  let cur={x:0,y:0};
-  path.commands.forEach(cmd=>{
-    if(cmd.type==="M"){cur={x:cmd.x,y:cmd.y};pts.push(cur);}
-    else if(cmd.type==="L"){
-      const a=cur,b={x:cmd.x,y:cmd.y};
-      for(let i=0;i<=1;i++)
-        pts.push({x:a.x+(b.x-a.x)*i,y:a.y+(b.y-a.y)*i});
-      cur=b;
+  let pts=[], cur={x:0,y:0};
+  path.commands.forEach(c=>{
+    if(c.type==="M"){cur={x:c.x,y:c.y};pts.push(cur);}
+    else if(c.type==="L"){
+      const a=cur,b={x:c.x,y:c.y};
+      pts.push(a,b); cur=b;
     }
-    else if(cmd.type==="C"){
-      const p0=cur,p1={x:cmd.x1,y:cmd.y1},
-            p2={x:cmd.x2,y:cmd.y2},p3={x:cmd.x,y:cmd.y};
+    else if(c.type==="C"){
+      const p0=cur,p1={x:c.x1,y:c.y1},p2={x:c.x2,y:c.y2},p3={x:c.x,y:c.y};
       for(let i=0;i<=samples;i++) pts.push(cubic(p0,p1,p2,p3,i/samples));
       cur=p3;
     }
-    else if(cmd.type==="Q"){
-      const p0=cur,p1={x:cmd.x1,y:cmd.y1},p2={x:cmd.x,y:cmd.y};
+    else if(c.type==="Q"){
+      const p0=cur,p1={x:c.x1,y:c.y1},p2={x:c.x,y:c.y};
       for(let i=0;i<=samples;i++) pts.push(quad(p0,p1,p2,i/samples));
       cur=p2;
     }
@@ -134,54 +127,65 @@ function samplePath(path, samples){
   return pts;
 }
 
-fontUpload.addEventListener("change", async e=>{
-  const f=e.target.files[0];
-  if(!f) return;
-  const buf=await f.arrayBuffer();
-  loadedFont=opentype.parse(buf);
-});
+function render() {
+  if (!font) return;
 
-renderBtn.addEventListener("click", ()=>{
-  if(!loadedFont) return alert("Upload a font first.");
+  const text = textInput.value || "BLOCK";
+  const samples = +samplesInput.value;
+  const vX = +vXInput.value;
+  const vY = +vYInput.value;
 
-  const text=textInput.value||"BLOCK";
-  const samples=parseInt(samplesInput.value);
-  const vX=Number(vXInput.value);
-  const vY=Number(vYInput.value);
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
 
-  while(svg.firstChild) svg.removeChild(svg.firstChild);
+  const fixed = document.createElementNS("http://www.w3.org/2000/svg","g");
+  const glyphsG = document.createElementNS("http://www.w3.org/2000/svg","g");
+  svg.append(fixed, glyphsG);
 
-  const fixedGroup=document.createElementNS("http://www.w3.org/2000/svg","g");
-  const glyphGroup=document.createElementNS("http://www.w3.org/2000/svg","g");
-  glyphGroup.id="glyphGroup";
+  const fontSize = 160;
+  const startX = 80;
+  const baseY = 240;
+  const cx = 550, cy = 210;
 
-  svg.appendChild(fixedGroup);
-  svg.appendChild(glyphGroup);
+  // draw glyph path (rotated numerically)
+  const path = font.getPath(text, startX, baseY, fontSize);
+  const d = path.commands.map(c=>{
+    if(c.x!==undefined){
+      const p = rotatePoint({x:c.x,y:c.y},cx,cy,rotationDeg);
+      c = {...c, x:p.x, y:p.y};
+    }
+    if(c.x1!==undefined){
+      const p1 = rotatePoint({x:c.x1,y:c.y1},cx,cy,rotationDeg);
+      c.x1=p1.x; c.y1=p1.y;
+    }
+    if(c.x2!==undefined){
+      const p2 = rotatePoint({x:c.x2,y:c.y2},cx,cy,rotationDeg);
+      c.x2=p2.x; c.y2=p2.y;
+    }
+    return c;
+  });
 
-  const fontSize=160;
-  const startX=80;
-  const baseY=240;
+  glyphsG.appendChild(Object.assign(
+    document.createElementNS("http://www.w3.org/2000/svg","path"),
+    { 
+      setAttributeNS: undefined 
+    }
+  ));
 
-  // draw glyphs
-  const fullPath=loadedFont.getPath(text,startX,baseY,fontSize);
-  const glyphPath=document.createElementNS("http://www.w3.org/2000/svg","path");
-  glyphPath.setAttribute("d",fullPath.toPathData());
-  glyphPath.setAttribute("fill","#000");
-  glyphGroup.appendChild(glyphPath);
+  glyphsG.firstChild.setAttribute("d", path.toPathData());
+  glyphsG.firstChild.setAttribute("fill", "#000");
 
-  // sample per glyph
+  // sample and rotate points
   let penX=startX;
   let allPts=[];
-  const glyphs=loadedFont.stringToGlyphs(text);
-
-  for(let i=0;i<glyphs.length;i++){
-    const g=glyphs[i];
+  font.stringToGlyphs(text).forEach((g,i,a)=>{
     const p=g.getPath(penX,baseY,fontSize);
-    allPts.push(...samplePath(p,samples));
-    const kern=i<glyphs.length-1?loadedFont.getKerningValue(g,glyphs[i+1]):0;
-    penX+=g.advanceWidth*(fontSize/loadedFont.unitsPerEm)+kern*(fontSize/loadedFont.unitsPerEm);
-  }
+    const pts=samplePath(p,samples).map(pt=>rotatePoint(pt,cx,cy,rotationDeg));
+    allPts.push(...pts);
+    const k=i<a.length-1?font.getKerningValue(g,a[i+1]):0;
+    penX+=g.advanceWidth*(fontSize/font.unitsPerEm)+k*(fontSize/font.unitsPerEm);
+  });
 
+  // draw lines
   allPts.forEach(pt=>{
     const l=document.createElementNS("http://www.w3.org/2000/svg","line");
     l.setAttribute("x1",pt.x);
@@ -190,7 +194,7 @@ renderBtn.addEventListener("click", ()=>{
     l.setAttribute("y2",vY);
     l.setAttribute("stroke","#111");
     l.setAttribute("stroke-width","0.8");
-    fixedGroup.appendChild(l);
+    fixed.appendChild(l);
   });
 
   const vp=document.createElementNS("http://www.w3.org/2000/svg","circle");
@@ -198,15 +202,22 @@ renderBtn.addEventListener("click", ()=>{
   vp.setAttribute("cy",vY);
   vp.setAttribute("r","3.5");
   vp.setAttribute("fill","#111");
-  fixedGroup.appendChild(vp);
+  fixed.appendChild(vp);
+}
+
+fontUpload.addEventListener("change", async e=>{
+  const f=e.target.files[0];
+  if(!f) return;
+  font=opentype.parse(await f.arrayBuffer());
 });
 
 rotateZ.addEventListener("input", ()=>{
-  const g=document.getElementById("glyphGroup");
-  if(!g) return;
-  const cx=550, cy=210;
-  g.setAttribute("transform",`rotate(${rotateZ.value} ${cx} ${cy})`);
+  rotationDeg = +rotateZ.value;
+  render();
 });
+
+renderBtn.addEventListener("click", render);
 </script>
 </body>
 </html>
+
