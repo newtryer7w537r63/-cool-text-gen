@@ -2,102 +2,111 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Block Text Generator</title>
+<title>Perspective Block Text</title>
 
 <style>
-    body {
-        background: #f2f2f2;
-        font-family: sans-serif;
-        padding: 20px;
-    }
+body {
+    background: #eee;
+    font-family: sans-serif;
+    padding: 20px;
+}
 
-    .controls {
-        margin-bottom: 20px;
-        display: flex;
-        gap: 12px;
-        flex-wrap: wrap;
-        align-items: center;
-    }
+.controls {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+}
 
-    input[type="text"] {
-        font-size: 18px;
-        padding: 6px;
-        width: 240px;
-    }
+svg {
+    border: 1px solid #ccc;
+    background: white;
+    transform-origin: center center;
+}
 
-    .stage {
-        perspective: 800px;
-        margin-top: 40px;
-    }
-
-    .block-text {
-        font-size: 120px;
-        font-weight: 900;
-        position: relative;
-        display: inline-block;
-        transform-style: preserve-3d;
-        transition: transform 0.1s linear;
-    }
-
-    /* Fake 3D extrusion */
-    .block-text::before {
-        content: attr(data-text);
-        position: absolute;
-        left: 0;
-        top: 0;
-        color: #999;
-        transform: translateZ(-40px);
-        z-index: -1;
-    }
-
-    /* Layered shadows for thickness */
-    .layer {
-        position: absolute;
-        left: 0;
-        top: 0;
-        color: #aaa;
-        z-index: -1;
-    }
 </style>
 </head>
-
 <body>
 
-<h2>3D Block Text Generator</h2>
+<h2>Perspective Text Generator</h2>
 
 <div class="controls">
     <input id="textInput" type="text" value="BLOCK">
-    <label>Rotate
-        <input id="rotate" type="range" min="0" max="360" value="20">
+    <label>Z Rotate
+        <input id="rotateZ" type="range" min="0" max="360" value="0">
     </label>
     <label>Upload TTF
         <input id="fontUpload" type="file" accept=".ttf">
     </label>
 </div>
 
-<div class="stage">
-    <div id="text" class="block-text" data-text="BLOCK">BLOCK</div>
-</div>
+<svg id="svg" width="800" height="300">
+    <defs></defs>
+
+    <!-- perspective lines -->
+    <g id="lines" stroke="#000" stroke-width="1" fill="none"></g>
+
+    <!-- text -->
+    <text id="text"
+          x="200"
+          y="180"
+          font-size="120"
+          font-weight="900"
+          fill="none"
+          stroke="black"
+          stroke-width="2">
+        BLOCK
+    </text>
+</svg>
 
 <script>
+const svg = document.getElementById("svg");
 const textEl = document.getElementById("text");
-const textInput = document.getElementById("textInput");
-const rotate = document.getElementById("rotate");
+const linesGroup = document.getElementById("lines");
+const input = document.getElementById("textInput");
+const rotateZ = document.getElementById("rotateZ");
 const fontUpload = document.getElementById("fontUpload");
 
-// update text
-textInput.addEventListener("input", () => {
-    textEl.textContent = textInput.value;
-    textEl.setAttribute("data-text", textInput.value);
+// fixed vanishing point
+const VANISH_X = 400;
+const VANISH_Y = 20;
+
+function redrawPerspective() {
+    linesGroup.innerHTML = "";
+
+    const box = textEl.getBBox();
+
+    const points = [
+        [box.x, box.y],
+        [box.x + box.width, box.y],
+        [box.x, box.y + box.height],
+        [box.x + box.width, box.y + box.height],
+        [box.x + box.width / 2, box.y],
+        [box.x + box.width / 2, box.y + box.height]
+    ];
+
+    points.forEach(p => {
+        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        line.setAttribute("x1", p[0]);
+        line.setAttribute("y1", p[1]);
+        line.setAttribute("x2", VANISH_X);
+        line.setAttribute("y2", VANISH_Y);
+        linesGroup.appendChild(line);
+    });
+}
+
+// text update
+input.addEventListener("input", () => {
+    textEl.textContent = input.value;
+    redrawPerspective();
 });
 
-// rotate text
-rotate.addEventListener("input", () => {
-    textEl.style.transform =
-        `rotateY(${rotate.value}deg) rotateX(15deg)`;
+// Z rotation only
+rotateZ.addEventListener("input", () => {
+    svg.style.transform = `rotate(${rotateZ.value}deg)`;
 });
 
-// load custom TTF
+// font upload
 fontUpload.addEventListener("change", e => {
     const file = e.target.files[0];
     if (!file) return;
@@ -111,12 +120,16 @@ fontUpload.addEventListener("change", e => {
             font-family: '${fontName}';
             src: url('${fontURL}');
         }
-        .block-text {
-            font-family: '${fontName}', sans-serif;
+        #text {
+            font-family: '${fontName}';
         }
     `;
     document.head.appendChild(style);
+
+    redrawPerspective();
 });
+
+redrawPerspective();
 </script>
 
 </body>
