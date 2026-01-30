@@ -2,12 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Spiral Projection to Vanishing Point</title>
+<title>Spiral Projection Export</title>
 
 <style>
 body {
   font-family: system-ui, sans-serif;
-  background: #fafafa;
+  background: #f6f6f6;
   padding: 16px;
 }
 .controls {
@@ -23,14 +23,21 @@ svg {
   border: 1px solid #ccc;
   background: white;
 }
+button {
+  padding: 6px 10px;
+}
 </style>
 </head>
 <body>
 
-<h3>Spiral Projection (Not a Wave)</h3>
+<h3>Spiral Projection with Export</h3>
 
 <div class="controls">
   <input id="textInput" value="BLOCK">
+
+  <label>Text Color
+    <input id="colorInput" type="text" value="#000000">
+  </label>
 
   <label>Twist
     <input id="twist" type="range" min="1" max="20" value="10">
@@ -45,6 +52,7 @@ svg {
 
   <input id="fontUpload" type="file" accept=".ttf,.otf">
   <button id="renderBtn">Render</button>
+  <button id="downloadBtn">Download PNG</button>
 </div>
 
 <svg id="svg" viewBox="0 0 1100 420"></svg>
@@ -53,16 +61,18 @@ svg {
 <script>
 const svg = document.getElementById("svg");
 const textInput = document.getElementById("textInput");
+const colorInput = document.getElementById("colorInput");
 const twistInput = document.getElementById("twist");
 const radiusInput = document.getElementById("radius");
 const vXInput = document.getElementById("vX");
 const vYInput = document.getElementById("vY");
 const fontUpload = document.getElementById("fontUpload");
 const renderBtn = document.getElementById("renderBtn");
+const downloadBtn = document.getElementById("downloadBtn");
 
 let font = null;
 
-function samplePath(path, samples=12) {
+function samplePath(path, samples=10) {
   let pts=[], cur={x:0,y:0};
   path.commands.forEach(c=>{
     if(c.type==="M"){cur={x:c.x,y:c.y};pts.push(cur);}
@@ -82,19 +92,17 @@ function samplePath(path, samples=12) {
 }
 
 function spiralProjectionPath(p, vx, vy, twist, radius) {
-  const steps = 30;
+  const steps = 28;
   let d = `M ${p.x} ${p.y}`;
 
   for (let i=1;i<=steps;i++) {
     const t = i/steps;
-
     const r = radius * (1 - t);
     const a = t * twist * Math.PI * 2;
 
     const sx = vx + Math.cos(a) * r;
     const sy = vy + Math.sin(a) * r;
 
-    // project from glyph toward spiral
     const x = p.x * (1 - t) + sx * t;
     const y = p.y * (1 - t) + sy * t;
 
@@ -108,15 +116,16 @@ function render() {
   svg.innerHTML = "";
 
   const text = textInput.value || "BLOCK";
+  const color = colorInput.value || "#000";
   const fontSize = 160;
   const startX = 80;
   const baseY = 240;
 
-  const path = font.getPath(text,startX,baseY,fontSize);
-  const tp = document.createElementNS("http://www.w3.org/2000/svg","path");
-  tp.setAttribute("d",path.toPathData());
-  tp.setAttribute("fill","#000");
-  svg.appendChild(tp);
+  const textPath = font.getPath(text,startX,baseY,fontSize);
+  const textSVG = document.createElementNS("http://www.w3.org/2000/svg","path");
+  textSVG.setAttribute("d",textPath.toPathData());
+  textSVG.setAttribute("fill",color);
+  svg.appendChild(textSVG);
 
   let pts=[];
   let penX=startX;
@@ -135,20 +144,47 @@ function render() {
   pts.forEach(pt=>{
     const sp=document.createElementNS("http://www.w3.org/2000/svg","path");
     sp.setAttribute("d",spiralProjectionPath(pt,vx,vy,twist,radius));
-    sp.setAttribute("stroke","#111");
+    sp.setAttribute("stroke",color);
     sp.setAttribute("stroke-width","0.7");
     sp.setAttribute("fill","none");
     svg.appendChild(sp);
   });
 }
 
+function downloadPNG() {
+  const scale = 4; // increase for even higher quality
+  const xml = new XMLSerializer().serializeToString(svg);
+  const svg64 = btoa(unescape(encodeURIComponent(xml)));
+  const img = new Image();
+
+  img.onload = () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = svg.viewBox.baseVal.width * scale;
+    canvas.height = svg.viewBox.baseVal.height * scale;
+
+    const ctx = canvas.getContext("2d");
+    ctx.scale(scale, scale);
+    ctx.drawImage(img, 0, 0);
+
+    const link = document.createElement("a");
+    link.download = "spiral_projection.png";
+    link.href = canvas.toDataURL("image/png");
+    link.click();
+  };
+
+  img.src = "data:image/svg+xml;base64," + svg64;
+}
+
 fontUpload.addEventListener("change", async e=>{
   font = opentype.parse(await e.target.files[0].arrayBuffer());
   render();
 });
+
+renderBtn.addEventListener("click", render);
+downloadBtn.addEventListener("click", downloadPNG);
 twistInput.addEventListener("input", render);
 radiusInput.addEventListener("input", render);
-renderBtn.addEventListener("click", render);
+colorInput.addEventListener("input", render);
 </script>
 </body>
 </html>
