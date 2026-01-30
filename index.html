@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Spiral Perspective Lines</title>
+<title>True Spiral Perspective Lines</title>
 
 <style>
 body {
@@ -29,19 +29,31 @@ svg {
 </head>
 <body>
 
-<h3>Spiral Lines (Text Fixed, Ends Pinned)</h3>
+<h3>True Spiral Perspective (Text Fixed)</h3>
 
 <div class="controls">
   <input id="textInput" value="BLOCK">
+
   <label>Twist
-    <input id="twist" type="range" min="0" max="40" value="12">
+    <input id="twist" type="range" min="0" max="24" value="12">
   </label>
+
   <label>Amplitude
-    <input id="amp" type="range" min="0" max="40" value="14">
+    <input id="amp" type="range" min="0" max="40" value="18">
   </label>
-  <label>Vanishing X <input id="vX" type="number" value="550"></label>
-  <label>Vanishing Y <input id="vY" type="number" value="40"></label>
-  <input id="fontUpload" type="file" accept=".ttf,.otf">
+
+  <label>Vanishing X
+    <input id="vX" type="number" value="550" style="width:80px">
+  </label>
+
+  <label>Vanishing Y
+    <input id="vY" type="number" value="40" style="width:80px">
+  </label>
+
+  <label>Upload TTF/OTF
+    <input id="fontUpload" type="file" accept=".ttf,.otf">
+  </label>
+
   <button id="renderBtn">Render</button>
 </div>
 
@@ -50,60 +62,78 @@ svg {
 <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 <script>
 const svg = document.getElementById("svg");
+const textInput = document.getElementById("textInput");
 const twistInput = document.getElementById("twist");
 const ampInput = document.getElementById("amp");
 const vXInput = document.getElementById("vX");
 const vYInput = document.getElementById("vY");
-const textInput = document.getElementById("textInput");
 const fontUpload = document.getElementById("fontUpload");
 const renderBtn = document.getElementById("renderBtn");
 
 let font = null;
 let points = [];
 
+/* ---- path sampling ---- */
 function samplePath(path, samples = 12) {
-  let pts = [], cur = {x:0,y:0};
+  let pts = [];
+  let cur = {x:0, y:0};
+
   path.commands.forEach(c => {
     if (c.type === "M") {
-      cur = {x:c.x,y:c.y};
+      cur = {x:c.x, y:c.y};
       pts.push(cur);
     }
-    if (c.type === "L") {
-      cur = {x:c.x,y:c.y};
+    else if (c.type === "L") {
+      cur = {x:c.x, y:c.y};
       pts.push(cur);
     }
-    if (c.type === "C") {
+    else if (c.type === "C") {
       for (let i=0;i<=samples;i++) {
-        const t=i/samples,u=1-t;
+        const t=i/samples, u=1-t;
         pts.push({
-          x:u*u*u*cur.x+3*u*u*t*c.x1+3*u*t*t*c.x2+t*t*t*c.x,
-          y:u*u*u*cur.y+3*u*u*t*c.y1+3*u*t*t*c.y2+t*t*t*c.y
+          x: u*u*u*cur.x + 3*u*u*t*c.x1 + 3*u*t*t*c.x2 + t*t*t*c.x,
+          y: u*u*u*cur.y + 3*u*u*t*c.y1 + 3*u*t*t*c.y2 + t*t*t*c.y
         });
       }
-      cur={x:c.x,y:c.y};
+      cur = {x:c.x, y:c.y};
     }
   });
   return pts;
 }
 
+/* ---- TRUE spiral (not a wave) ---- */
 function spiralPath(p, vx, vy, twist, amp) {
   const dx = vx - p.x;
   const dy = vy - p.y;
-  const len = Math.hypot(dx,dy);
-  const nx = -dy / len;
-  const ny = dx / len;
+  const len = Math.hypot(dx, dy);
 
-  const steps = 16;
+  const ux = dx / len;
+  const uy = dy / len;
+
+  // perpendicular basis
+  const nx = -uy;
+  const ny = ux;
+
+  const steps = 20;
   let d = `M ${p.x} ${p.y}`;
 
-  for (let i=1;i<steps;i++) {
-    const t = i/steps;
-    const wave = Math.sin(t * twist * Math.PI * 2);
-    const falloff = t * (1 - t);
-    const off = wave * amp * falloff;
+  for (let i = 1; i < steps; i++) {
+    const t = i / steps;
 
-    const x = p.x + dx*t + nx*off;
-    const y = p.y + dy*t + ny*off;
+    const angle = t * twist * Math.PI * 2;
+    const radius = amp * t * (1 - t);
+
+    const ox = Math.cos(angle) * radius;
+    const oy = Math.sin(angle) * radius;
+
+    const x =
+      p.x + dx * t +
+      ux * ox + nx * oy;
+
+    const y =
+      p.y + dy * t +
+      uy * ox + ny * oy;
+
     d += ` L ${x} ${y}`;
   }
 
@@ -111,28 +141,33 @@ function spiralPath(p, vx, vy, twist, amp) {
   return d;
 }
 
+/* ---- render ---- */
 function render() {
   if (!font) return;
   svg.innerHTML = "";
 
+  const text = textInput.value || "BLOCK";
   const fontSize = 160;
   const startX = 80;
   const baseY = 240;
-  const text = textInput.value || "BLOCK";
 
-  const path = font.getPath(text,startX,baseY,fontSize);
-  const textPath = document.createElementNS("http://www.w3.org/2000/svg","path");
-  textPath.setAttribute("d",path.toPathData());
-  textPath.setAttribute("fill","#000");
-  svg.appendChild(textPath);
+  // draw text
+  const textPath = font.getPath(text, startX, baseY, fontSize);
+  const tp = document.createElementNS("http://www.w3.org/2000/svg","path");
+  tp.setAttribute("d", textPath.toPathData());
+  tp.setAttribute("fill", "#000");
+  svg.appendChild(tp);
 
+  // sample glyph points
   points = [];
   let penX = startX;
-  font.stringToGlyphs(text).forEach((g,i,a)=>{
-    const p = g.getPath(penX,baseY,fontSize);
+  const glyphs = font.stringToGlyphs(text);
+
+  glyphs.forEach((g,i,a)=>{
+    const p = g.getPath(penX, baseY, fontSize);
     points.push(...samplePath(p));
-    const k=i<a.length-1?font.getKerningValue(g,a[i+1]):0;
-    penX+=g.advanceWidth*(fontSize/font.unitsPerEm)+k*(fontSize/font.unitsPerEm);
+    const k = i<a.length-1 ? font.getKerningValue(g,a[i+1]) : 0;
+    penX += g.advanceWidth*(fontSize/font.unitsPerEm) + k*(fontSize/font.unitsPerEm);
   });
 
   const vx = +vXInput.value;
@@ -140,16 +175,18 @@ function render() {
   const twist = +twistInput.value;
   const amp = +ampInput.value;
 
+  // draw spiral lines
   points.forEach(pt=>{
     const sp = document.createElementNS("http://www.w3.org/2000/svg","path");
-    sp.setAttribute("d", spiralPath(pt,vx,vy,twist,amp));
-    sp.setAttribute("stroke","#111");
-    sp.setAttribute("stroke-width","0.8");
-    sp.setAttribute("fill","none");
+    sp.setAttribute("d", spiralPath(pt, vx, vy, twist, amp));
+    sp.setAttribute("stroke", "#111");
+    sp.setAttribute("stroke-width", "0.8");
+    sp.setAttribute("fill", "none");
     svg.appendChild(sp);
   });
 }
 
+/* ---- events ---- */
 fontUpload.addEventListener("change", async e=>{
   font = opentype.parse(await e.target.files[0].arrayBuffer());
   render();
