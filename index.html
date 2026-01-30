@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Block Text Generator</title>
+
+<style>
+    body {
+        background: #f2f2f2;
+        font-family: sans-serif;
+        padding: 20px;
+    }
+
+    .controls {
+        margin-bottom: 20px;
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        align-items: center;
+    }
+
+    input[type="text"] {
+        font-size: 18px;
+        padding: 6px;
+        width: 240px;
+    }
+
+    .stage {
+        perspective: 800px;
+        margin-top: 40px;
+    }
+
+    .block-text {
+        font-size: 120px;
+        font-weight: 900;
+        position: relative;
+        display: inline-block;
+        transform-style: preserve-3d;
+        transition: transform 0.1s linear;
+    }
+
+    /* Fake 3D extrusion */
+    .block-text::before {
+        content: attr(data-text);
+        position: absolute;
+        left: 0;
+        top: 0;
+        color: #999;
+        transform: translateZ(-40px);
+        z-index: -1;
+    }
+
+    /* Layered shadows for thickness */
+    .layer {
+        position: absolute;
+        left: 0;
+        top: 0;
+        color: #aaa;
+        z-index: -1;
+    }
+</style>
+</head>
+
+<body>
+
+<h2>3D Block Text Generator</h2>
+
+<div class="controls">
+    <input id="textInput" type="text" value="BLOCK">
+    <label>Rotate
+        <input id="rotate" type="range" min="0" max="360" value="20">
+    </label>
+    <label>Upload TTF
+        <input id="fontUpload" type="file" accept=".ttf">
+    </label>
+</div>
+
+<div class="stage">
+    <div id="text" class="block-text" data-text="BLOCK">BLOCK</div>
+</div>
+
+<script>
+const textEl = document.getElementById("text");
+const textInput = document.getElementById("textInput");
+const rotate = document.getElementById("rotate");
+const fontUpload = document.getElementById("fontUpload");
+
+// update text
+textInput.addEventListener("input", () => {
+    textEl.textContent = textInput.value;
+    textEl.setAttribute("data-text", textInput.value);
+});
+
+// rotate text
+rotate.addEventListener("input", () => {
+    textEl.style.transform =
+        `rotateY(${rotate.value}deg) rotateX(15deg)`;
+});
+
+// load custom TTF
+fontUpload.addEventListener("change", e => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const fontURL = URL.createObjectURL(file);
+    const fontName = "customFont";
+
+    const style = document.createElement("style");
+    style.innerHTML = `
+        @font-face {
+            font-family: '${fontName}';
+            src: url('${fontURL}');
+        }
+        .block-text {
+            font-family: '${fontName}', sans-serif;
+        }
+    `;
+    document.head.appendChild(style);
+});
+</script>
+
+</body>
+</html>
